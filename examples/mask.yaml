@@ -1,0 +1,39 @@
+# MaskForge Declarative Masking Rules
+version: "1.0"
+salt: "prod-staging-salt-demo-2026"
+
+global:
+  preserve_nulls: true
+  ignore_columns:
+    - "id"
+    - "created_at"
+    - "updated_at"
+
+tables:
+  users:
+    columns:
+      email: "faker.email"
+      first_name: "faker.first_name"
+      last_name: "faker.last_name"
+      phone_number: "faker.phone_number(prefix=+40)"
+      ssn: "faker.cnp"
+      password_hash: "hash.constant"
+    ignore_columns:
+      - "id"
+      - "created_at"
+
+  payments:
+    columns:
+      card_holder: "faker.full_name"
+      card_number: "faker.credit_card(brand=visa)"
+      iban: "faker.iban(country=RO)"
+      billing_address: "faker.street_address"
+      ip_address: "faker.ipv4(mode=private)"
+
+  customers:
+    columns:
+      email: "faker.email"
+      full_name: "faker.full_name"
+      phone: "faker.phone_number"
+      ssn: "faker.ssn"
+      credit_card: "faker.credit_card"
