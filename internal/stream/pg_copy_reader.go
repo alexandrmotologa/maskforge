@@ -22,7 +22,10 @@ type PGCopyBlock struct {
 	Columns     []string
 	ColIndex    map[string]int
 	Rules       map[int]string // col index -> rule string
+	Conditions  map[int]string // col index -> when condition expression
 	HasMasking  bool
+	SampleLimit int64
+	RowCount    int64
 }
 
 // ParsePGCopyHeader tests whether a line is a PostgreSQL COPY ... FROM stdin statement.
@@ -46,11 +49,15 @@ func ParsePGCopyHeader(line string, cfg *config.Config) (*PGCopyBlock, bool) {
 		}
 	}
 
+	tc, _ := cfg.GetTableConfig(tableName)
+
 	block := &PGCopyBlock{
-		TableName: tableName,
-		Columns:   cols,
-		ColIndex:  make(map[string]int),
-		Rules:     make(map[int]string),
+		TableName:   tableName,
+		Columns:     cols,
+		ColIndex:    make(map[string]int),
+		Rules:       make(map[int]string),
+		Conditions:  make(map[int]string),
+		SampleLimit: tc.SampleLimit,
 	}
 
 	for idx, col := range cols {
@@ -58,13 +65,16 @@ func ParsePGCopyHeader(line string, cfg *config.Config) (*PGCopyBlock, bool) {
 		if rule, shouldMask := cfg.GetColumnRule(tableName, col); shouldMask {
 			block.Rules[idx] = rule
 			block.HasMasking = true
+			if cond := cfg.GetColumnCondition(tableName, col); cond != "" {
+				block.Conditions[idx] = cond
+			}
 		}
 	}
 
 	return block, true
 }
 
-// ProcessPGCopyLine transforms a single tab-delimited COPY line.
+// ProcessPGCopyLine transforms a single tab-delimited COPY line, checking conditional expressions.
 func ProcessPGCopyLine(line []byte, block *PGCopyBlock, reg *faker.Registry, salt string) []byte {
 	// If no columns need masking, return line as is
 	if !block.HasMasking || len(block.Rules) == 0 {
@@ -77,6 +87,17 @@ func ProcessPGCopyLine(line []byte, block *PGCopyBlock, reg *faker.Registry, sal
 		return line
 	}
 
+	// Build row lookup map if conditions exist
+	var rowVals map[string]string
+	if len(block.Conditions) > 0 {
+		rowVals = make(map[string]string, len(block.Columns))
+		for i, col := range block.Columns {
+			if i < len(parts) {
+				rowVals[strings.ToLower(col)] = string(parts[i])
+			}
+		}
+	}
+
 	modified := false
 	for colIdx, ruleStr := range block.Rules {
 		if colIdx >= len(parts) {
@@ -87,6 +108,14 @@ func ProcessPGCopyLine(line []byte, block *PGCopyBlock, reg *faker.Registry, sal
 		if rawVal == `\N` {
 			// NULL value in COPY format
 			continue
+		}
+
+		// Check conditional when expression
+		if cond, hasCond := block.Conditions[colIdx]; hasCond && cond != "" {
+			if !EvaluateCondition(cond, rowVals) {
+				// Condition evaluated to false, keep original value
+				continue
+			}
 		}
 
 		colName := ""
@@ -129,7 +158,6 @@ func StreamPGCopy(reader *bufio.Reader, writer *bufio.Writer, block *PGCopyBlock
 			return rowCount, err
 		}
 
-		// If line was truncated by ReadLine buffer, read the rest
 		fullLine := line
 		for isPrefix {
 			var cont []byte
@@ -145,6 +173,11 @@ func StreamPGCopy(reader *bufio.Reader, writer *bufio.Writer, block *PGCopyBlock
 			writer.Write(fullLine)
 			writer.WriteByte('\n')
 			break
+		}
+
+		// Check table sample limit
+		if block.SampleLimit > 0 && rowCount >= block.SampleLimit {
+			continue // Skip writing extra rows beyond limit
 		}
 
 		transformed := ProcessPGCopyLine(fullLine, block, reg, salt)

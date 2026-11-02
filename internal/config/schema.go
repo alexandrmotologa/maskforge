@@ -2,6 +2,8 @@ package config
 
 import (
 	"strings"
+
+	"github.com/alexandrmotologa/maskforge/internal/faker"
 )
 
 // Config represents the top-level declarative mask.yaml structure.
@@ -18,13 +20,16 @@ type GlobalConfig struct {
 	DefaultRule   string   `yaml:"default_rule,omitempty" json:"default_rule,omitempty"`
 	IgnoreTables  []string `yaml:"ignore_tables,omitempty" json:"ignore_tables,omitempty"`
 	IgnoreColumns []string `yaml:"ignore_columns,omitempty" json:"ignore_columns,omitempty"`
+	SampleRate    float64  `yaml:"sample_rate,omitempty" json:"sample_rate,omitempty"` // 0.0 to 1.0
 }
 
 // TableConfig defines masking specifications for a specific table.
 type TableConfig struct {
 	Columns       map[string]string `yaml:"columns,omitempty" json:"columns,omitempty"`
+	Conditions    map[string]string `yaml:"conditions,omitempty" json:"conditions,omitempty"`
 	IgnoreColumns []string          `yaml:"ignore_columns,omitempty" json:"ignore_columns,omitempty"`
 	Truncate      bool              `yaml:"truncate,omitempty" json:"truncate,omitempty"`
+	SampleLimit   int64             `yaml:"sample_limit,omitempty" json:"sample_limit,omitempty"`
 }
 
 // CleanTableName strips schema qualifiers (e.g. "public.users" -> "users", "`db`.`users`" -> "users").
@@ -125,4 +130,32 @@ func (c *Config) GetColumnRule(tableName, columnName string) (rule string, shoul
 	}
 
 	return "passthrough", false
+}
+
+// GetColumnCondition returns the optional conditional expression for masking a column.
+func (c *Config) GetColumnCondition(tableName, columnName string) string {
+	tc, found := c.GetTableConfig(tableName)
+	cleanCol := CleanColumnName(columnName)
+
+	if found && tc.Conditions != nil {
+		if cond, ok := tc.Conditions[cleanCol]; ok && cond != "" {
+			return cond
+		}
+		for k, cond := range tc.Conditions {
+			if CleanColumnName(k) == cleanCol && cond != "" {
+				return cond
+			}
+		}
+	}
+
+	// Also check if specified in rule parameters when="..."
+	rule, shouldMask := c.GetColumnRule(tableName, columnName)
+	if shouldMask {
+		_, params := faker.ParseRule(rule)
+		if whenCond, ok := params["when"]; ok && whenCond != "" {
+			return whenCond
+		}
+	}
+
+	return ""
 }

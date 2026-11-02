@@ -1,6 +1,6 @@
 # MaskForge Configuration Reference
 
-Configurations are declarative YAML files (`mask.yaml`) specifying tables, columns, and transformer rules.
+Configurations are declarative YAML files (`mask.yaml`) specifying tables, columns, transformer rules, sampling thresholds, and conditional expressions.
 
 ## Basic Structure
 
@@ -10,6 +10,7 @@ salt: "your-deterministic-salt-secret-key"
 
 global:
   preserve_nulls: true
+  sample_rate: 0.1 # Retains 10% of rows globally
   ignore_columns:
     - "id"
     - "created_at"
@@ -24,14 +25,22 @@ tables:
       phone_number: "faker.phone_number(prefix=+40)"
       ssn: "faker.ssn"
       password_hash: "hash.constant"
+    conditions:
+      email: "role != 'system_admin' AND is_internal = false"
     ignore_columns:
       - "tenant_id"
+    sample_limit: 5000
+
+  events:
+    columns:
+      payload: "faker.json(customer.email=faker.email, billing.card=faker.credit_card)"
 
   orders:
     columns:
       customer_email: "faker.email"
       shipping_address: "faker.street_address"
       card_number: "faker.credit_card(brand=visa)"
+      total_amount: "numeric.jitter(percent=15)"
 ```
 
 ## Global Options
@@ -41,9 +50,52 @@ tables:
 | `version` | string | `"1.0"` | Configuration schema version. |
 | `salt` | string | Auto-generated | Secret key used for HMAC-SHA256 deterministic seeding. |
 | `global.preserve_nulls` | boolean | `true` | When true, SQL `NULL` and `\N` tokens pass through unchanged. |
+| `global.sample_rate` | float | `0.0` | Global row sampling fraction (0.01 to 1.0). |
 | `global.default_rule` | string | `""` | Fallback rule applied to any column not matched by explicit configuration. |
 | `global.ignore_tables` | list[string] | `[]` | Tables completely excluded from transformation. |
 | `global.ignore_columns` | list[string] | `[]` | Column names ignored globally across all tables. |
+
+## Table Options
+
+| Field | Type | Description |
+|---|---|---|
+| `columns` | map[string]string | Maps column names to transformer rule strings. |
+| `conditions` | map[string]string | Maps column names to conditional `when` expressions. |
+| `ignore_columns` | list[string] | List of columns in this table to leave unchanged. |
+| `sample_limit` | integer | Maximum number of rows to stream for this table. |
+| `truncate` | boolean | If true, drops all data rows from this table. |
+
+## Conditional Masking (`when`)
+
+Conditional masking allows selective anonymization based on row values. For example, preserving internal employee or admin accounts while masking real customer data:
+
+```yaml
+tables:
+  users:
+    columns:
+      email: "faker.email"
+    conditions:
+      email: "role != 'admin' AND is_active = true"
+```
+
+Supported operators:
+- Equality: `=`, `!=`, `<>`
+- Comparison: `>`, `<`, `>=`, `<=`
+- Pattern matching: `LIKE '%pattern%'`, `NOT LIKE '%internal%'`
+- Logical composition: `AND`, `OR`
+
+## Nested JSON / JSONB Masking (`faker.json`)
+
+To mask sensitive attributes inside JSON objects without breaking the outer JSON syntax:
+
+```yaml
+tables:
+  webhook_events:
+    columns:
+      payload: "faker.json(customer.email=faker.email, customer.phone=faker.phone_number, card.number=faker.credit_card)"
+```
+
+Paths are evaluated recursively. Nested keys not targeted in the rule string remain intact.
 
 ## Available Transformers
 
@@ -78,6 +130,12 @@ tables:
     - `country=DE`: German IBAN (22 chars).
     - `country=FR`: French IBAN (27 chars).
     - `country=GB`: UK IBAN (22 chars).
+- `numeric.jitter`: Adds +/- percent statistical variance to numeric columns.
+  - Parameters:
+    - `percent=15`: Variance percentage.
+- `numeric.range`: Bounds numeric value into [min, max] range.
+  - Parameters:
+    - `min=100`, `max=500`.
 
 ### Government Identifiers
 - `faker.ssn`: US Social Security Number (`AAA-GG-SSSS`).

@@ -15,8 +15,8 @@ var (
 
 // ParsedInsert represents the components of a parsed SQL INSERT statement.
 type ParsedInsert struct {
-	Prefix     string // e.g. "INSERT INTO `users` (`id`, `email`) VALUES "
-	Suffix     string // e.g. ";"
+	Prefix     string
+	Suffix     string
 	TableName  string
 	Columns    []string
 	ValuesPart string
@@ -34,7 +34,6 @@ func ParseInsertStatement(line string) (*ParsedInsert, bool) {
 		return nil, false
 	}
 
-	// Table name can be in group 1 (backtick), 2 (quote), or 3 (identifier)
 	tableName := matches[1]
 	if tableName == "" {
 		tableName = matches[2]
@@ -60,7 +59,6 @@ func ParseInsertStatement(line string) (*ParsedInsert, bool) {
 		rawValuesPart = strings.TrimSuffix(rawValuesPart, ";")
 	}
 
-	// Determine the prefix before values section
 	valuesIdx := strings.Index(strings.ToUpper(trimmed), "VALUES")
 	prefix := trimmed[:valuesIdx+len("VALUES")] + " "
 
@@ -80,14 +78,13 @@ func ProcessInsertStatement(line string, cfg *config.Config, reg *faker.Registry
 		return line
 	}
 
-	// Check if this table has any masking rules
 	tc, found := cfg.GetTableConfig(parsed.TableName)
 	if !found && cfg.Global.DefaultRule == "" {
 		return line
 	}
 
-	// Map column index to rule
 	rules := make(map[int]string)
+	conditions := make(map[int]string)
 	hasMasking := false
 
 	if len(parsed.Columns) > 0 {
@@ -95,11 +92,12 @@ func ProcessInsertStatement(line string, cfg *config.Config, reg *faker.Registry
 			if rule, shouldMask := cfg.GetColumnRule(parsed.TableName, col); shouldMask {
 				rules[idx] = rule
 				hasMasking = true
+				if cond := cfg.GetColumnCondition(parsed.TableName, col); cond != "" {
+					conditions[idx] = cond
+				}
 			}
 		}
 	} else if len(tc.Columns) > 0 {
-		// If columns are not explicitly listed in INSERT statement,
-		// we match configured columns by index if possible
 		return line
 	}
 
@@ -107,18 +105,32 @@ func ProcessInsertStatement(line string, cfg *config.Config, reg *faker.Registry
 		return line
 	}
 
-	// Extract tuples
 	tuples := ExtractValuesTuples(parsed.ValuesPart)
 	if len(tuples) == 0 {
 		return line
 	}
 
 	var maskedTuples []string
-	for _, tupleStr := range tuples {
+	for tupleIdx, tupleStr := range tuples {
+		if tc.SampleLimit > 0 && int64(tupleIdx) >= tc.SampleLimit {
+			break
+		}
+
 		values := ParseSQLValuesTuple(tupleStr)
 		if len(values) == 0 {
 			maskedTuples = append(maskedTuples, tupleStr)
 			continue
+		}
+
+		// Build row lookup map for conditions
+		var rowVals map[string]string
+		if len(conditions) > 0 {
+			rowVals = make(map[string]string, len(parsed.Columns))
+			for i, col := range parsed.Columns {
+				if i < len(values) {
+					rowVals[strings.ToLower(col)] = values[i].Unquoted
+				}
+			}
 		}
 
 		var formattedVals []string
@@ -127,6 +139,14 @@ func ProcessInsertStatement(line string, cfg *config.Config, reg *faker.Registry
 			if !shouldMask || val.IsNull {
 				formattedVals = append(formattedVals, val.Raw)
 				continue
+			}
+
+			// Check condition
+			if cond, hasCond := conditions[colIdx]; hasCond && cond != "" {
+				if !EvaluateCondition(cond, rowVals) {
+					formattedVals = append(formattedVals, val.Raw)
+					continue
+				}
 			}
 
 			colName := ""

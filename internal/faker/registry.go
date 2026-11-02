@@ -215,6 +215,34 @@ func (r *Registry) registerDefaults() {
 		}
 		return GenerateRandomNumberString(rng, minVal, maxVal)
 	})
+
+	// Numeric Jitter and Bounded Range
+	r.Register("numeric.jitter", func(ctx TransformContext, params map[string]string) string {
+		rng := NewDeterministicPRNG(ctx.Salt, "num_jitter", ctx.RawValue)
+		pct, _ := strconv.ParseFloat(params["percent"], 64)
+		if pct <= 0 {
+			pct = 15.0
+		}
+		return NumericJitter(rng, ctx.RawValue, pct)
+	})
+	r.Register("numeric.range", func(ctx TransformContext, params map[string]string) string {
+		rng := NewDeterministicPRNG(ctx.Salt, "num_range", ctx.RawValue)
+		minVal, _ := strconv.ParseFloat(params["min"], 64)
+		maxVal, _ := strconv.ParseFloat(params["max"], 64)
+		return NumericRange(rng, minVal, maxVal, ctx.RawValue)
+	})
+
+	// Deep JSON / JSONB Masking
+	r.Register("faker.json", func(ctx TransformContext, params map[string]string) string {
+		if len(params) == 0 {
+			return ctx.RawValue
+		}
+		masked, err := MaskJSONPayload(ctx.RawValue, params, ctx.Salt, r)
+		if err != nil {
+			return ctx.RawValue
+		}
+		return masked
+	})
 }
 
 // ParseRule parses a rule string like "faker.email(preserve_domain=true, domain=test.com)"

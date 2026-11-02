@@ -213,6 +213,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/referential/test", s.handleReferentialTest)
 	s.mux.HandleFunc("/api/stream/simulate", s.handleStreamSimulate)
 	s.mux.HandleFunc("/api/config/export", s.handleConfigExport)
+	s.mux.HandleFunc("/api/verify", s.handleVerify)
+	s.mux.HandleFunc("/api/report/html", s.handleReportHTML)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -405,6 +407,66 @@ func (s *Server) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"yaml": string(yamlBytes),
 	})
+}
+
+type VerifyRequest struct {
+	SQL                 string   `json:"sql"`
+	AllowDomains        []string `json:"allow_domains"`
+	AllowSyntheticCards bool     `json:"allow_synthetic_cards"`
+}
+
+func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req VerifyRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	opts := discovery.VerifyOptions{
+		AllowedDomains:      req.AllowDomains,
+		AllowSyntheticCards: req.AllowSyntheticCards,
+	}
+
+	report, err := discovery.VerifySQLDump(strings.NewReader(req.SQL), opts)
+	if err != nil {
+		http.Error(w, "Verification failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, report)
+}
+
+type ReportHTMLRequest struct {
+	Report       *discovery.ScanReport `json:"report"`
+	DatabaseName string                `json:"database_name"`
+}
+
+func (s *Server) handleReportHTML(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req ReportHTMLRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Report == nil {
+		http.Error(w, "Report cannot be nil", http.StatusBadRequest)
+		return
+	}
+
+	html := discovery.GenerateHTMLComplianceReport(req.Report, req.DatabaseName)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(html))
 }
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {

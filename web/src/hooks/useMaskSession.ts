@@ -17,7 +17,7 @@ export function useMaskSession() {
   const [sqlInput, setSqlInput] = useState<string>(DEMO_SQL_DUMP);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'tables' | 'editor' | 'diff' | 'referential' | 'simulator' | 'yaml'>('tables');
+  const [activeTab, setActiveTab] = useState<'tables' | 'editor' | 'diff' | 'referential' | 'simulator' | 'verify' | 'yaml'>('tables');
   const [selectedTable, setSelectedTable] = useState<string>('users');
 
   // Load available transformers on mount
@@ -116,6 +116,65 @@ export function useMaskSession() {
     });
   };
 
+  const applyPreset = (preset: 'gdpr' | 'pci' | 'hipaa' | 'dev') => {
+    if (!report) return;
+
+    setConfig((prev) => {
+      const newTables: Record<string, { columns: Record<string, string>; ignore_columns: string[] }> = {};
+
+      report.tables.forEach((t) => {
+        const cols: Record<string, string> = {};
+
+        t.columns.forEach((c) => {
+          const colName = c.name.toLowerCase();
+          const piiType = c.detected_type.toLowerCase();
+
+          switch (preset) {
+            case 'gdpr':
+              if (c.risk !== 'LOW' || piiType.includes('email') || piiType.includes('name') || piiType.includes('phone') || piiType.includes('address') || piiType.includes('id')) {
+                cols[c.name] = c.recommended_rule !== 'passthrough' ? c.recommended_rule : 'faker.text';
+              }
+              break;
+
+            case 'pci':
+              if (piiType.includes('credit card') || piiType.includes('pan') || piiType.includes('iban') || colName.includes('card') || colName.includes('cvv') || colName.includes('account')) {
+                cols[c.name] = c.recommended_rule;
+              }
+              break;
+
+            case 'hipaa':
+              if (c.compliance.some((comp) => comp.toLowerCase().includes('hipaa')) || piiType.includes('email') || piiType.includes('phone') || piiType.includes('ssn') || colName.includes('dob') || colName.includes('birth')) {
+                cols[c.name] = c.recommended_rule;
+              }
+              break;
+
+            case 'dev':
+              if (piiType.includes('password') || colName.includes('password') || colName.includes('secret')) {
+                cols[c.name] = 'hash.constant';
+              } else if (piiType.includes('email')) {
+                cols[c.name] = 'faker.email';
+              } else if (piiType.includes('phone')) {
+                cols[c.name] = 'faker.phone_number';
+              }
+              break;
+          }
+        });
+
+        if (Object.keys(cols).length > 0) {
+          newTables[t.name] = {
+            columns: cols,
+            ignore_columns: ['id'],
+          };
+        }
+      });
+
+      return {
+        ...prev,
+        tables: newTables,
+      };
+    });
+  };
+
   const updateSalt = (newSalt: string) => {
     setConfig((prev) => ({ ...prev, salt: newSalt }));
     runScan(sqlInput, newSalt);
@@ -178,6 +237,7 @@ export function useMaskSession() {
     setSelectedTable,
     runScan,
     updateColumnRule,
+    applyPreset,
     updateSalt,
     simulateStream,
     testReferentialMatch,

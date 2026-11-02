@@ -144,3 +144,27 @@ tables:
 		t.Fatalf("expected email to be masked in simulated stream")
 	}
 }
+
+func TestVerifyEndpoint(t *testing.T) {
+	srv := NewServer()
+	body := VerifyRequest{
+		SQL: "COPY public.users (id, email) FROM stdin;\n1\tclean@example.com\n\\.\n",
+	}
+	jsonBytes, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/verify", bytes.NewReader(jsonBytes))
+	rec := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	var resp map[string]interface{}
+	json.Unmarshal(rec.Body.Bytes(), &resp)
+
+	if resp["is_clean"] != true {
+		t.Fatalf("expected is_clean true for clean test stream")
+	}
+}

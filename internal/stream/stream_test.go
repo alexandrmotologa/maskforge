@@ -203,3 +203,84 @@ tables:
 		t.Fatalf("inconsistent deterministic transformation: %q vs %q", res1, res2)
 	}
 }
+
+func TestConditionalMasking(t *testing.T) {
+	cfgYAML := `
+version: "1.0"
+salt: "condition-salt"
+tables:
+  users:
+    columns:
+      email: "faker.email"
+    conditions:
+      email: "role != 'admin'"
+`
+	cfg, err := config.LoadFromBytes([]byte(cfgYAML))
+	if err != nil {
+		t.Fatalf("failed to parse config: %v", err)
+	}
+
+	inputSQL := `COPY public.users (id, role, email) FROM stdin;
+1	admin	superadmin@internal-corp.com
+2	member	customer.john@gmail.com
+\.
+`
+	inBuf := bytes.NewBufferString(inputSQL)
+	var outBuf bytes.Buffer
+
+	pipeline := NewPipeline(cfg)
+	_, err = pipeline.ProcessStream(inBuf, &outBuf)
+	if err != nil {
+		t.Fatalf("streaming failed: %v", err)
+	}
+
+	outStr := outBuf.String()
+
+	// Admin email MUST be preserved
+	if !strings.Contains(outStr, "superadmin@internal-corp.com") {
+		t.Fatalf("expected admin email to be preserved due to condition role != 'admin', got: %s", outStr)
+	}
+
+	// Member email MUST be masked
+	if strings.Contains(outStr, "customer.john@gmail.com") {
+		t.Fatalf("expected member email to be masked, got: %s", outStr)
+	}
+}
+
+func TestSamplingLimit(t *testing.T) {
+	cfgYAML := `
+version: "1.0"
+salt: "sample-salt"
+tables:
+  logs:
+    sample_limit: 2
+`
+	cfg, err := config.LoadFromBytes([]byte(cfgYAML))
+	if err != nil {
+		t.Fatalf("config error: %v", err)
+	}
+
+	inputSQL := `COPY public.logs (id, msg) FROM stdin;
+1	line 1
+2	line 2
+3	line 3
+4	line 4
+5	line 5
+\.
+`
+	inBuf := bytes.NewBufferString(inputSQL)
+	var outBuf bytes.Buffer
+
+	pipeline := NewPipeline(cfg)
+	metrics, err := pipeline.ProcessStream(inBuf, &outBuf)
+	if err != nil {
+		t.Fatalf("process error: %v", err)
+	}
+
+	if metrics.RowsMasked != 2 {
+		t.Fatalf("expected exactly 2 rows masked/written due to sample_limit: 2, got %d", metrics.RowsMasked)
+	}
+	if metrics.RowsSkipped != 3 {
+		t.Fatalf("expected 3 rows skipped, got %d", metrics.RowsSkipped)
+	}
+}

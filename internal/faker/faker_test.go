@@ -1,7 +1,9 @@
 package faker
 
 import (
+	"encoding/json"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -157,5 +159,82 @@ func TestParseRuleParameters(t *testing.T) {
 	}
 	if params2["value"] != "$2a$12$xyz" {
 		t.Fatalf("expected value $2a$12$xyz, got %+v", params2)
+	}
+}
+
+func TestDeepJSONMasking(t *testing.T) {
+	reg := NewRegistry()
+	salt := "json-salt"
+
+	rawJSON := `{"customer": {"name": "Arthur Dent", "email": "dent@earth.org"}, "metadata": {"ip": "1.2.3.4"}}`
+	ruleStr := `faker.json(customer.email=faker.email, customer.name=faker.full_name)`
+
+	ctx := TransformContext{
+		Salt:       salt,
+		Table:      "events",
+		Column:     "payload",
+		RawValue:   rawJSON,
+		RuleString: ruleStr,
+	}
+
+	masked := reg.Transform(ctx)
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(masked), &parsed); err != nil {
+		t.Fatalf("failed to unmarshal masked JSON: %v", err)
+	}
+
+	customer := parsed["customer"].(map[string]interface{})
+	maskedEmail := customer["email"].(string)
+	maskedName := customer["name"].(string)
+
+	if maskedEmail == "dent@earth.org" {
+		t.Fatalf("customer.email was not masked")
+	}
+	if maskedName == "Arthur Dent" {
+		t.Fatalf("customer.name was not masked")
+	}
+
+	// Verify metadata.ip was preserved untouched
+	metadata := parsed["metadata"].(map[string]interface{})
+	if metadata["ip"].(string) != "1.2.3.4" {
+		t.Fatalf("unconfigured path metadata.ip was unexpectedly modified")
+	}
+}
+
+func TestNumericJitterAndRange(t *testing.T) {
+	reg := NewRegistry()
+	salt := "num-salt"
+
+	ctxJitter := TransformContext{
+		Salt:       salt,
+		Table:      "orders",
+		Column:     "total",
+		RawValue:   "150.00",
+		RuleString: "numeric.jitter(percent=10)",
+	}
+	maskedJitter := reg.Transform(ctxJitter)
+	val, err := strconv.ParseFloat(maskedJitter, 64)
+	if err != nil {
+		t.Fatalf("failed to parse jittered float: %v", err)
+	}
+	if val < 135.0 || val > 165.0 {
+		t.Fatalf("jittered value %f out of expected +/- 10%% range [135, 165]", val)
+	}
+
+	ctxRange := TransformContext{
+		Salt:       salt,
+		Table:      "salaries",
+		Column:     "amount",
+		RawValue:   "99999",
+		RuleString: "numeric.range(min=5000, max=8000)",
+	}
+	maskedRange := reg.Transform(ctxRange)
+	valRange, errRange := strconv.ParseFloat(maskedRange, 64)
+	if errRange != nil {
+		t.Fatalf("failed to parse ranged float: %v", errRange)
+	}
+	if valRange < 5000.0 || valRange > 8000.0 {
+		t.Fatalf("ranged value %f out of [5000, 8000]", valRange)
 	}
 }

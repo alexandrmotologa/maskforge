@@ -16,8 +16,13 @@ Zero unmasked bytes ever touch disk.
 
 - **Zero-Disk Streaming Filter**: Reads standard SQL COPY and INSERT streams from STDIN and emits masked SQL to STDOUT with 256 KB streaming buffers.
 - **Automated PII Discovery**: Scans schemas and sample records, classifying sensitive columns against 50+ heuristics across GDPR, HIPAA, PCI-DSS, and SOC 2 requirements.
+- **Deep JSON / JSONB Masking**: Traverses nested JSON structures (`faker.json(paths)`) to anonymize sensitive attributes inside payloads without breaking valid JSON syntax.
+- **Conditional Masking Rules**: Preserves internal admin accounts, test users, or specific roles while anonymizing production customer data (`when: "role != 'admin'"`).
+- **Zero-Leak Security Verifier**: Post-masking adversarial scanner (`maskforge verify`) auditing outputs to certify zero sensitive PII leaks for SOC 2 and GDPR auditors.
+- **Database Subsetting & Sampling**: Downsamples multi-hundred gigabyte dumps to lightweight staging environments (`--sample-rate 0.1` or `--limit-rows 1000`).
 - **Deterministic Referential Integrity**: Maps identical foreign key values across relational tables to the same synthetic pseudonyms without breaking database constraints.
 - **Format-Preserving Transformers**: Synthetic emails satisfy RFC 5322, credit cards satisfy Luhn mod-10, IBANs satisfy ISO 7064 check digits, and national IDs maintain format standards.
+- **Statistical Numeric Jitter**: Adds configurable variance to financial totals, salaries, and order amounts while maintaining statistical distributions.
 - **Interactive Web Studio**: Built-in React 19 web interface running on port 9880 to audit schemas, preview before and after row diffs, and test cross-table join integrity.
 - **High Throughput**: Processes over 140,000 rows per second with under 30 MB resident memory.
 
@@ -45,6 +50,12 @@ MaskForge processes SQL dumps as a streaming pipeline:
 │  ┌───────────────────────┐   ┌──────────────────────┐  │
 │  │ Statement Dispatcher  │──▶│ COPY / INSERT Parser │  │
 │  └───────────────────────┘   └──────────┬───────────┘  │
+│                                         │              │
+│                                         ▼              │
+│                              ┌──────────────────────┐  │
+│                              │ Conditional Evaluator│  │
+│                              │ (when expressions)   │  │
+│                              └──────────┬───────────┘  │
 │                                         │              │
 │                                         ▼              │
 │                              ┌──────────────────────┐  │
@@ -99,10 +110,10 @@ Download the appropriate binary for your operating system from the GitHub Releas
 
 ### 1. Audit Database Dump and Generate Configuration
 
-Scan an existing SQL dump file to detect sensitive columns and generate a starter `mask.yaml`:
+Scan an existing SQL dump file to detect sensitive columns, export a configuration, or generate a standalone HTML compliance report:
 
 ```bash
-maskforge inspect prod_dump.sql --generate-config mask.yaml
+maskforge inspect prod_dump.sql --generate-config mask.yaml --export-report compliance_report.html
 ```
 
 Output:
@@ -137,13 +148,33 @@ Pipe directly from `pg_dump` into `psql`:
 pg_dump prod_db | maskforge run --config mask.yaml | psql staging_db
 ```
 
-Or between files:
+Or between files, optionally sampling 10% of rows:
 
 ```bash
-maskforge run --config mask.yaml --input prod.sql --output staging.sql
+maskforge run --config mask.yaml --input prod.sql --output staging.sql --sample-rate 0.1
 ```
 
-### 3. Launch Interactive Web Studio
+### 3. Verify Dump for Zero Sensitive Data Leaks
+
+Audit an already-masked SQL dump to certify that no live credit cards, production emails, or SSNs remain:
+
+```bash
+maskforge verify staging.sql --allow-test-cards
+```
+
+Output:
+```
+========================================================================================
+                         MASKFORGE ZERO-LEAK AUDIT REPORT                               
+========================================================================================
+Lines Audited:    48
+Compliance Score: 100 / 100
+
+[PASSED] ZERO SENSITIVE PII LEAKS DETECTED.
+Database dump is certified safe for staging and local development.
+```
+
+### 4. Launch Interactive Web Studio
 
 Start the embedded visual studio:
 
@@ -151,7 +182,7 @@ Start the embedded visual studio:
 maskforge studio --port 9880
 ```
 
-Open `http://localhost:9880` in your browser to inspect table risk matrices, adjust transformer parameters, view side-by-side row diffs, and verify referential integrity.
+Open `http://localhost:9880` in your browser to inspect table risk matrices, apply 1-click compliance presets (GDPR, PCI-DSS, HIPAA), test foreign key preservation, and run leak audits.
 
 ---
 
@@ -177,8 +208,15 @@ tables:
       phone_number: "faker.phone_number(prefix=+40)"
       ssn: "faker.cnp"
       password_hash: "hash.constant"
+    conditions:
+      email: "role != 'admin' AND is_internal = false"
     ignore_columns:
       - "tenant_id"
+    sample_limit: 5000
+
+  events:
+    columns:
+      payload: "faker.json(customer.email=faker.email, customer.name=faker.full_name)"
 
   payments:
     columns:
@@ -191,6 +229,7 @@ tables:
   orders:
     columns:
       customer_email: "faker.email" # Matches users.email deterministically
+      total_amount: "numeric.jitter(percent=10)"
 ```
 
 ### Available Transformers
@@ -206,9 +245,12 @@ tables:
 | **Finance** | `faker.credit_card` | `brand=visa`, `brand=mastercard` | Luhn mod-10 compliant test card number |
 | | `faker.iban` | `country=RO`, `country=DE` | Valid IBAN with ISO 7064 check digits |
 | | `faker.cvv` | `length=3` | Card verification code |
+| | `numeric.jitter` | `percent=10` | Adds deterministic statistical variance |
+| | `numeric.range` | `min=100`, `max=500` | Bounds numbers into range |
 | **Government** | `faker.ssn` | - | US Social Security Number |
 | | `faker.cnp` | - | Romanian Personal Numeric Code |
 | | `faker.national_id` | `country=RO` | Generic national identifier |
+| **Nested Data** | `faker.json` | `path1=rule1, path2=rule2` | Recursively masks target JSON/JSONB keys |
 | **Location** | `faker.street_address` | - | Street name and number |
 | | `faker.city` | - | City name |
 | | `faker.country` | - | Country name |

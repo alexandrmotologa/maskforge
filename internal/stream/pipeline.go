@@ -15,6 +15,7 @@ import (
 type PipelineMetrics struct {
 	LinesProcessed int64
 	RowsMasked     int64
+	RowsSkipped    int64
 	BytesRead      int64
 	BytesWritten   int64
 	Duration       time.Duration
@@ -24,8 +25,10 @@ type PipelineMetrics struct {
 
 // Pipeline coordinates stream parsing and anonymization.
 type Pipeline struct {
-	cfg      *config.Config
-	registry *faker.Registry
+	cfg        *config.Config
+	registry   *faker.Registry
+	sampleRate float64
+	limitRows  int64
 }
 
 // NewPipeline initializes a new streaming pipeline with a given configuration.
@@ -33,9 +36,21 @@ func NewPipeline(cfg *config.Config) *Pipeline {
 	if cfg == nil {
 		cfg = config.DefaultConfig()
 	}
+	sampleRate := cfg.Global.SampleRate
 	return &Pipeline{
-		cfg:      cfg,
-		registry: faker.NewRegistry(),
+		cfg:        cfg,
+		registry:   faker.NewRegistry(),
+		sampleRate: sampleRate,
+	}
+}
+
+// SetSampling sets runtime sampling rate and row limits.
+func (p *Pipeline) SetSampling(sampleRate float64, limitRows int64) {
+	if sampleRate > 0 && sampleRate <= 1.0 {
+		p.sampleRate = sampleRate
+	}
+	if limitRows > 0 {
+		p.limitRows = limitRows
 	}
 }
 
@@ -49,6 +64,7 @@ func (p *Pipeline) ProcessStream(r io.Reader, w io.Writer) (*PipelineMetrics, er
 
 	var inCopyBlock bool
 	var activeCopyBlock *PGCopyBlock
+	tableRowCounts := make(map[string]int64)
 
 	for {
 		line, isPrefix, err := bufReader.ReadLine()
@@ -59,7 +75,6 @@ func (p *Pipeline) ProcessStream(r io.Reader, w io.Writer) (*PipelineMetrics, er
 			return metrics, err
 		}
 
-		// Read long lines fully
 		fullLine := line
 		for isPrefix {
 			var cont []byte
@@ -73,16 +88,38 @@ func (p *Pipeline) ProcessStream(r io.Reader, w io.Writer) (*PipelineMetrics, er
 		metrics.BytesRead += int64(len(fullLine) + 1)
 		metrics.LinesProcessed++
 
-		// Check if we are inside a COPY block
+		// Check if inside a COPY block
 		if inCopyBlock {
 			trimmed := bytes.TrimSpace(fullLine)
 			if bytes.Equal(trimmed, []byte(`\.`)) {
-				// End of COPY block
 				inCopyBlock = false
 				activeCopyBlock = nil
 				countWriter.Write(fullLine)
 				countWriter.WriteByte('\n')
 				continue
+			}
+
+			tableName := activeCopyBlock.TableName
+			tableRowCounts[tableName]++
+			currCount := tableRowCounts[tableName]
+
+			// Check table sample limit
+			maxLimit := activeCopyBlock.SampleLimit
+			if p.limitRows > 0 && (maxLimit == 0 || p.limitRows < maxLimit) {
+				maxLimit = p.limitRows
+			}
+			if maxLimit > 0 && currCount > maxLimit {
+				metrics.RowsSkipped++
+				continue
+			}
+
+			// Check sample rate
+			if p.sampleRate > 0 && p.sampleRate < 1.0 {
+				rng := faker.NewDeterministicPRNG(p.cfg.Salt, "sample_row", string(fullLine))
+				if rng.Float64() > p.sampleRate {
+					metrics.RowsSkipped++
+					continue
+				}
 			}
 
 			// Process COPY row
@@ -93,7 +130,7 @@ func (p *Pipeline) ProcessStream(r io.Reader, w io.Writer) (*PipelineMetrics, er
 			continue
 		}
 
-		// Check if line initiates a PostgreSQL COPY block
+		// Check COPY header
 		lineStr := string(fullLine)
 		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(lineStr)), "COPY ") {
 			if block, ok := ParsePGCopyHeader(lineStr, p.cfg); ok {
@@ -105,7 +142,7 @@ func (p *Pipeline) ProcessStream(r io.Reader, w io.Writer) (*PipelineMetrics, er
 			}
 		}
 
-		// Check if line is an INSERT statement
+		// Check INSERT statement
 		if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(lineStr)), "INSERT INTO") {
 			processed := ProcessInsertStatement(lineStr, p.cfg, p.registry, p.cfg.Salt)
 			countWriter.WriteString(processed)

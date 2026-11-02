@@ -18,11 +18,10 @@ import (
 	"github.com/alexandrmotologa/maskforge/internal/stream"
 )
 
-const version = "1.0.0"
+const version = "1.1.0"
 
 func main() {
 	if len(os.Args) < 2 {
-		// If piped data is available on STDIN, default to "run"
 		stat, _ := os.Stdin.Stat()
 		if (stat.Mode() & os.ModeCharDevice) == 0 {
 			runPipe(os.Args[1:])
@@ -40,6 +39,8 @@ func main() {
 		runPipe(args)
 	case "inspect":
 		runInspect(args)
+	case "verify", "audit":
+		runVerify(args)
 	case "studio", "serve":
 		runStudio(args)
 	case "benchmark", "bench":
@@ -50,7 +51,6 @@ func main() {
 	case "help", "-h", "--help":
 		printUsage()
 	default:
-		// If first arg starts with a flag (e.g. -c or -i), assume "run"
 		if strings.HasPrefix(command, "-") {
 			runPipe(os.Args[1:])
 			return
@@ -70,6 +70,7 @@ Usage:
 Commands:
   run         Stream and mask SQL dump from STDIN to STDOUT or between files
   inspect     Scan database dump, audit PII risks, and auto-generate mask.yaml
+  verify      Audit an already-masked SQL dump to certify zero sensitive PII leaks
   studio      Launch interactive web studio and visual rule builder (port 9880)
   benchmark   Run high-throughput synthetic stream benchmark
   version     Display version and build information
@@ -78,14 +79,39 @@ Examples:
   # Zero-disk pipe between pg_dump and psql:
   pg_dump prod_db | maskforge run --config mask.yaml | psql staging_db
 
-  # Direct file-to-file transformation:
-  maskforge run -c mask.yaml -i prod_dump.sql -o staging_masked.sql
+  # Direct file-to-file transformation with 10% sampling:
+  maskforge run -c mask.yaml -i prod.sql -o staging.sql --sample-rate 0.1
 
-  # Inspect database dump and generate configuration:
-  maskforge inspect prod_dump.sql --generate-config mask.yaml
+  # Inspect database dump and export HTML compliance report:
+  maskforge inspect prod_dump.sql --export-report compliance_report.html
+
+  # Verify an already-masked staging dump for zero leaks:
+  maskforge verify staging_dump.sql --allow-test-cards
 
   # Launch visual web studio:
   maskforge studio --port 9880`)
+}
+
+// reorderArgs moves flags starting with '-' to the front so Go's flag.FlagSet parses them regardless of position.
+func reorderArgs(args []string) []string {
+	var flags []string
+	var positional []string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "-") {
+			flags = append(flags, arg)
+			// If flag takes a value in next argument (does not contain '=')
+			if !strings.Contains(arg, "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				flags = append(flags, args[i+1])
+				i++
+			}
+		} else {
+			positional = append(positional, arg)
+		}
+	}
+
+	return append(flags, positional...)
 }
 
 func runPipe(args []string) {
@@ -96,10 +122,12 @@ func runPipe(args []string) {
 	fs.StringVar(inputFile, "i", "", "Path to input SQL file (shorthand)")
 	outputFile := fs.String("output", "", "Path to output SQL file (default: STDOUT)")
 	fs.StringVar(outputFile, "o", "", "Path to output SQL file (shorthand)")
+	sampleRate := fs.Float64("sample-rate", 0, "Fraction of rows to retain (e.g. 0.1 for 10% sampling)")
+	limitRows := fs.Int64("limit-rows", 0, "Maximum rows to output per table")
 	quiet := fs.Bool("quiet", false, "Suppress progress and throughput statistics")
 	fs.BoolVar(quiet, "q", false, "Suppress progress (shorthand)")
 
-	_ = fs.Parse(args)
+	_ = fs.Parse(reorderArgs(args))
 
 	var cfg *config.Config
 	var err error
@@ -111,7 +139,6 @@ func runPipe(args []string) {
 			os.Exit(1)
 		}
 	} else {
-		// Look for default mask.yaml in current directory
 		if _, statErr := os.Stat("mask.yaml"); statErr == nil {
 			cfg, err = config.LoadFromFile("mask.yaml")
 			if err != nil {
@@ -129,7 +156,6 @@ func runPipe(args []string) {
 		}
 	}
 
-	// Setup input reader
 	var reader io.Reader = os.Stdin
 	if *inputFile != "" {
 		f, err := os.Open(*inputFile)
@@ -141,7 +167,6 @@ func runPipe(args []string) {
 		reader = f
 	}
 
-	// Setup output writer
 	var writer io.Writer = os.Stdout
 	if *outputFile != "" {
 		f, err := os.Create(*outputFile)
@@ -158,6 +183,10 @@ func runPipe(args []string) {
 	}
 
 	pipeline := stream.NewPipeline(cfg)
+	if *sampleRate > 0 || *limitRows > 0 {
+		pipeline.SetSampling(*sampleRate, *limitRows)
+	}
+
 	metrics, err := pipeline.ProcessStream(reader, writer)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Streaming failed: %v\n", err)
@@ -168,6 +197,9 @@ func runPipe(args []string) {
 		fmt.Fprintf(os.Stderr, "\nStreaming Complete:\n")
 		fmt.Fprintf(os.Stderr, "  Lines Processed: %d\n", metrics.LinesProcessed)
 		fmt.Fprintf(os.Stderr, "  Rows Masked:     %d\n", metrics.RowsMasked)
+		if metrics.RowsSkipped > 0 {
+			fmt.Fprintf(os.Stderr, "  Rows Sampled Out: %d\n", metrics.RowsSkipped)
+		}
 		fmt.Fprintf(os.Stderr, "  Data Streamed:   %.2f MB\n", float64(metrics.BytesRead)/(1024*1024))
 		fmt.Fprintf(os.Stderr, "  Duration:        %s\n", metrics.Duration.Round(time.Millisecond))
 		fmt.Fprintf(os.Stderr, "  Throughput:      %.0f rows/sec (%.2f MB/sec)\n", metrics.RowsPerSec, metrics.MBPerSec)
@@ -178,9 +210,10 @@ func runInspect(args []string) {
 	fs := flag.NewFlagSet("inspect", flag.ExitOnError)
 	genConfig := fs.String("generate-config", "", "Auto-generate mask.yaml to specified path")
 	fs.StringVar(genConfig, "g", "", "Auto-generate config (shorthand)")
+	exportReport := fs.String("export-report", "", "Export standalone HTML compliance certificate report to file")
 	samplesPerCol := fs.Int("samples", 10, "Maximum sample values to inspect per column")
 
-	_ = fs.Parse(args)
+	_ = fs.Parse(reorderArgs(args))
 	remaining := fs.Args()
 
 	var reader io.Reader = os.Stdin
@@ -207,7 +240,6 @@ func runInspect(args []string) {
 		os.Exit(1)
 	}
 
-	// Print summary audit table
 	fmt.Printf("========================================================================================\n")
 	fmt.Printf("                             MASKFORGE PII AUDIT REPORT                                \n")
 	fmt.Printf("========================================================================================\n")
@@ -253,6 +285,89 @@ func runInspect(args []string) {
 		}
 		fmt.Printf("Successfully generated configuration at %s\n", *genConfig)
 	}
+
+	if *exportReport != "" {
+		html := discovery.GenerateHTMLComplianceReport(report, sourceName)
+		if err := os.WriteFile(*exportReport, []byte(html), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing HTML report to %s: %v\n", *exportReport, err)
+			os.Exit(1)
+		}
+		fmt.Printf("Successfully generated HTML compliance report at %s\n", *exportReport)
+	}
+}
+
+func runVerify(args []string) {
+	fs := flag.NewFlagSet("verify", flag.ExitOnError)
+	allowDomainsStr := fs.String("allow-domains", "", "Comma-separated list of preserved company domains to permit")
+	allowTestCards := fs.Bool("allow-test-cards", false, "Permit synthetic Luhn-compliant test credit cards")
+
+	_ = fs.Parse(reorderArgs(args))
+	remaining := fs.Args()
+
+	var reader io.Reader = os.Stdin
+	sourceName := "STDIN"
+
+	if len(remaining) > 0 && remaining[0] != "-" {
+		filePath := remaining[0]
+		f, err := os.Open(filePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening file %s: %v\n", filePath, err)
+			os.Exit(1)
+		}
+		defer f.Close()
+		reader = f
+		sourceName = filePath
+	}
+
+	var allowDomains []string
+	if *allowDomainsStr != "" {
+		for _, d := range strings.Split(*allowDomainsStr, ",") {
+			d = strings.TrimSpace(d)
+			if d != "" {
+				allowDomains = append(allowDomains, d)
+			}
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "Scanning %s for residual unmasked PII leaks...\n\n", sourceName)
+
+	opts := discovery.VerifyOptions{
+		AllowedDomains:      allowDomains,
+		AllowSyntheticCards: *allowTestCards,
+	}
+
+	report, err := discovery.VerifySQLDump(reader, opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Verification failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("========================================================================================\n")
+	fmt.Printf("                         MASKFORGE ZERO-LEAK AUDIT REPORT                               \n")
+	fmt.Printf("========================================================================================\n")
+	fmt.Printf("Lines Audited:    %d\n", report.TotalLinesScanned)
+	fmt.Printf("Compliance Score: %d / 100\n", report.LeakScore)
+
+	if report.IsClean {
+		fmt.Printf("\n[PASSED] ZERO SENSITIVE PII LEAKS DETECTED.\n")
+		fmt.Printf("Database dump is certified safe for staging and local development.\n")
+		os.Exit(0)
+	}
+
+	fmt.Printf("\n[FAILED] %d POTENTIAL SENSITIVE DATA LEAKS FOUND:\n", len(report.Violations))
+	fmt.Printf("----------------------------------------------------------------------------------------\n")
+	fmt.Printf("%-8s %-26s %-10s %s\n", "LINE", "VIOLATION TYPE", "SEVERITY", "SNIPPET")
+	fmt.Printf("----------------------------------------------------------------------------------------\n")
+	for _, v := range report.Violations {
+		fmt.Printf("%-8d %-26s %-10s %s\n",
+			v.LineNumber,
+			truncate(v.ViolationType, 26),
+			v.Severity,
+			truncate(v.Snippet, 40),
+		)
+	}
+	fmt.Printf("\nAction required: Update mask.yaml to mask the affected columns and re-run.\n")
+	os.Exit(1)
 }
 
 func runStudio(args []string) {
@@ -261,7 +376,7 @@ func runStudio(args []string) {
 	fs.IntVar(port, "p", 9880, "Port shorthand")
 	noBrowser := fs.Bool("no-browser", false, "Do not auto-open browser")
 
-	_ = fs.Parse(args)
+	_ = fs.Parse(reorderArgs(args))
 
 	srv := server.NewServer()
 	srv.AttachStaticWeb()
@@ -294,11 +409,10 @@ func runBenchmark(args []string) {
 	numRows := fs.Int("rows", 100000, "Number of synthetic rows to benchmark")
 	fs.IntVar(numRows, "n", 100000, "Number of rows shorthand")
 
-	_ = fs.Parse(args)
+	_ = fs.Parse(reorderArgs(args))
 
 	fmt.Printf("Benchmarking MaskForge streaming engine with %d synthetic rows...\n", *numRows)
 
-	// Build synthetic PostgreSQL COPY stream
 	var inBuf bytes.Buffer
 	inBuf.WriteString("COPY public.users (id, email, first_name, last_name, phone, ssn, card_number) FROM stdin;\n")
 	for i := 1; i <= *numRows; i++ {

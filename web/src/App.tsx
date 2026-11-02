@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Table as TableIcon, Sliders, Columns, GitMerge, Terminal, Shield, Lock, Cpu, Sparkles } from 'lucide-react';
+import { Table as TableIcon, Sliders, Columns, GitMerge, Terminal, Shield, Lock, Cpu, Sparkles, ShieldCheck } from 'lucide-react';
 import { useMaskSession } from './hooks/useMaskSession';
 import { Header } from './components/Header';
 import { SchemaTableView } from './components/SchemaTableView';
@@ -7,6 +7,7 @@ import { MaskRuleEditor } from './components/MaskRuleEditor';
 import { RowDiffPreview } from './components/RowDiffPreview';
 import { ReferentialTest } from './components/ReferentialTest';
 import { LiveSimulator } from './components/LiveSimulator';
+import { LeakVerifier } from './components/LeakVerifier';
 import { ConfigExportModal } from './components/ConfigExportModal';
 
 export function App() {
@@ -22,6 +23,7 @@ export function App() {
     setSelectedTable,
     runScan,
     updateColumnRule,
+    applyPreset,
     updateSalt,
     simulateStream,
     testReferentialMatch,
@@ -37,7 +39,7 @@ export function App() {
   });
 
   interface TabItem {
-    id: 'tables' | 'editor' | 'diff' | 'referential' | 'simulator';
+    id: 'tables' | 'editor' | 'diff' | 'referential' | 'simulator' | 'verify';
     label: string;
     icon: typeof TableIcon;
     count?: number;
@@ -50,7 +52,34 @@ export function App() {
     { id: 'diff', label: 'Before / After Diff', icon: Columns },
     { id: 'referential', label: 'Referential Integrity', icon: GitMerge, badge: 'FK Match' },
     { id: 'simulator', label: 'Stream Simulator', icon: Terminal, badge: 'Live Pipe' },
+    { id: 'verify', label: 'Zero-Leak Verifier', icon: ShieldCheck, badge: 'Auditor' },
   ];
+
+  const handleDownloadReport = async () => {
+    if (!report) return;
+    try {
+      const res = await fetch('/api/report/html', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          report,
+          database_name: 'Production Staging Scope',
+        }),
+      });
+      if (res.ok) {
+        const html = await res.text();
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `maskforge_compliance_report_${Date.now()}.html`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      // ignore
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[#090d16] text-[#e2e8f0] flex flex-col selection:bg-emerald-500/20 selection:text-emerald-300">
@@ -61,6 +90,7 @@ export function App() {
         onUpdateSalt={updateSalt}
         onRescan={() => runScan()}
         onExport={() => setIsExportOpen(true)}
+        onDownloadReport={handleDownloadReport}
         isLoading={isLoading}
       />
 
@@ -104,7 +134,7 @@ export function App() {
               <Lock className="w-3.5 h-3.5 text-emerald-400" /> Zero Disk Writes
             </span>
             <span className="flex items-center gap-1.5">
-              <Cpu className="w-3.5 h-3.5 text-teal-400" /> &gt;100k rows/s
+              <Cpu className="w-3.5 h-3.5 text-teal-400" /> &gt;140k rows/s
             </span>
           </div>
         </div>
@@ -129,6 +159,7 @@ export function App() {
               columnRules={columnRules}
               onUpdateRule={updateColumnRule}
               transformers={transformers}
+              onApplyPreset={applyPreset}
             />
           )}
 
@@ -167,6 +198,10 @@ export function App() {
               configYAML={`version: "1.0"\nsalt: "${config.salt}"\n`}
               onSimulate={simulateStream}
             />
+          )}
+
+          {activeTab === 'verify' && (
+            <LeakVerifier initialSQL={sqlInput} />
           )}
         </div>
       </main>

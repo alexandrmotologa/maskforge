@@ -8,6 +8,7 @@ interface HeaderProps {
   onUpdateSalt: (newSalt: string) => void;
   onRescan: () => void;
   onExport: () => void;
+  onDownloadReport?: () => void;
   isLoading: boolean;
 }
 
@@ -17,6 +18,7 @@ export const Header: React.FC<HeaderProps> = ({
   onUpdateSalt,
   onRescan,
   onExport,
+  onDownloadReport,
   isLoading,
 }) => {
   const getRiskColor = (risk?: string) => {
@@ -90,6 +92,17 @@ export const Header: React.FC<HeaderProps> = ({
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-emerald-400' : ''}`} />
             <span>Audit PII</span>
           </button>
+
+          {/* Export Report Button */}
+          {onDownloadReport && (
+            <button
+              onClick={onDownloadReport}
+              className="flex items-center gap-1.5 bg-[#172033] hover:bg-[#1e2b44] text-teal-300 border border-teal-500/30 rounded-lg px-3 py-1.5 text-xs font-medium transition cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Audit Report</span>
+            </button>
+          )}
 
           {/* Export YAML Button */}
           <button
