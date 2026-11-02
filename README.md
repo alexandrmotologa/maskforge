@@ -1,6 +1,25 @@
-# MaskForge
+<p align="center">
+  <img src="docs/images/logo.png?raw=true" alt="MaskForge Logo" width="130" style="border-radius: 24px;" />
+</p>
 
-Production database anonymizer, sensitive PII masker, and safe staging dump generator for PostgreSQL and MySQL.
+<h1 align="center">MaskForge</h1>
+
+<p align="center">
+  <b>Streaming production database anonymizer and sensitive PII masker for PostgreSQL and MySQL.</b>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/go-1.23+-00ADD8?style=flat-square&logo=go" alt="Go Version" />
+  <img src="https://img.shields.io/badge/react-19-61DAFB?style=flat-square&logo=react" alt="React 19" />
+  <img src="https://img.shields.io/badge/throughput->140k%20rows%2Fs-10b981?style=flat-square" alt="Throughput" />
+  <img src="https://img.shields.io/badge/compliance-GDPR%20%7C%20HIPAA%20%7C%20PCI--DSS-0284c7?style=flat-square" alt="Compliance" />
+  <img src="https://img.shields.io/badge/memory-O(1)%20Streaming-emerald?style=flat-square" alt="Memory" />
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" />
+</p>
+
+<p align="center">
+  <img src="docs/images/maskforge_demo.gif?raw=true" alt="MaskForge Interactive Studio Demo" width="100%" style="border-radius: 12px;" />
+</p>
 
 MaskForge operates as a high-speed streaming UNIX pipe between database dump utilities and import tools. It automatically detects Personally Identifiable Information (PII), generates realistic synthetic data, and preserves relational integrity across foreign keys using deterministic HMAC-SHA256 seed mapping.
 
@@ -8,23 +27,70 @@ MaskForge operates as a high-speed streaming UNIX pipe between database dump uti
 pg_dump prod_db | maskforge run --config mask.yaml | psql staging_db
 ```
 
-Zero unmasked bytes ever touch disk.
+Zero unmasked bytes ever touch disk. Memory utilization remains constant regardless of whether processing a 50 MB dump or a 500 GB production database.
 
 ---
 
 ## Key Capabilities
 
-- **Zero-Disk Streaming Filter**: Reads standard SQL COPY and INSERT streams from STDIN and emits masked SQL to STDOUT with 256 KB streaming buffers.
-- **Automated PII Discovery**: Scans schemas and sample records, classifying sensitive columns against 50+ heuristics across GDPR, HIPAA, PCI-DSS, and SOC 2 requirements.
-- **Deep JSON / JSONB Masking**: Traverses nested JSON structures (`faker.json(paths)`) to anonymize sensitive attributes inside payloads without breaking valid JSON syntax.
+- **Zero-Disk Streaming Filter**: Reads standard SQL COPY and INSERT streams from STDIN and emits masked SQL to STDOUT using 256 KB buffered I/O.
+- **Automated PII Discovery**: Scans schemas and sample records, classifying sensitive columns against 50+ heuristic patterns covering GDPR, HIPAA, PCI-DSS, and SOC 2 requirements.
+- **Deep JSON and JSONB Masking**: Traverses nested JSON structures (`faker.json(paths)`) to anonymize sensitive attributes inside payloads without breaking valid JSON syntax.
 - **Conditional Masking Rules**: Preserves internal admin accounts, test users, or specific roles while anonymizing production customer data (`when: "role != 'admin'"`).
-- **Zero-Leak Security Verifier**: Post-masking adversarial scanner (`maskforge verify`) auditing outputs to certify zero sensitive PII leaks for SOC 2 and GDPR auditors.
-- **Database Subsetting & Sampling**: Downsamples multi-hundred gigabyte dumps to lightweight staging environments (`--sample-rate 0.1` or `--limit-rows 1000`).
+- **Adversarial Zero-Leak Verifier**: Scans output SQL dumps (`maskforge verify`) with 50+ security heuristics and Luhn checks to certify zero sensitive PII leaks for compliance audits.
+- **Database Subsetting and Sampling**: Downsamples large production dumps to lightweight staging environments (`--sample-rate 0.1` or `--limit-rows 1000`).
 - **Deterministic Referential Integrity**: Maps identical foreign key values across relational tables to the same synthetic pseudonyms without breaking database constraints.
 - **Format-Preserving Transformers**: Synthetic emails satisfy RFC 5322, credit cards satisfy Luhn mod-10, IBANs satisfy ISO 7064 check digits, and national IDs maintain format standards.
 - **Statistical Numeric Jitter**: Adds configurable variance to financial totals, salaries, and order amounts while maintaining statistical distributions.
+- **Standalone HTML Compliance Reports**: Generates self-contained security audit certificates (`--export-report report.html`) detailing audited tables, detected risks, and compliance mapping.
 - **Interactive Web Studio**: Built-in React 19 web interface running on port 9880 to audit schemas, preview before and after row diffs, and test cross-table join integrity.
 - **High Throughput**: Processes over 140,000 rows per second with under 30 MB resident memory.
+
+---
+
+## Visual Studio Tour
+
+### 1. Schema and PII Risk Matrix
+Inspect discovered tables, risk ratings, and apply 1-click compliance presets (GDPR Strict, PCI-DSS Financial, HIPAA Safe Harbor, Developer Light):
+
+<p align="center">
+  <img src="docs/images/maskforge_schema_matrix.png?raw=true" alt="MaskForge Schema and PII Risk Matrix" width="100%" style="border-radius: 8px;" />
+</p>
+
+### 2. Adversarial Zero-Leak Verifier
+Audit masked staging dumps to certify zero lingering credit cards, real email addresses, or SSNs:
+
+<p align="center">
+  <img src="docs/images/maskforge_leak_verifier.png?raw=true" alt="MaskForge Zero Leak Verifier" width="100%" style="border-radius: 8px;" />
+</p>
+
+### 3. Before and After Row Diff
+Visualize side-by-side row transformations across production records and generated synthetic values:
+
+<p align="center">
+  <img src="docs/images/maskforge_diff_preview.png?raw=true" alt="MaskForge Row Diff Preview" width="100%" style="border-radius: 8px;" />
+</p>
+
+### 4. Referential Integrity Join Assertion
+Verify that foreign keys across joined tables (e.g. `users.email` and `orders.customer_email`) map to identical pseudonyms:
+
+<p align="center">
+  <img src="docs/images/maskforge_referential.png?raw=true" alt="MaskForge Referential Integrity Tester" width="100%" style="border-radius: 8px;" />
+</p>
+
+### 5. Live Streaming Simulator
+Test UNIX pipe streaming directly in the browser with live throughput metrics and SQL diff inspection:
+
+<p align="center">
+  <img src="docs/images/maskforge_stream_simulator.png?raw=true" alt="MaskForge Stream Simulator" width="100%" style="border-radius: 8px;" />
+</p>
+
+### 6. Responsive Across All Screen Sizes
+Full adaptability across desktop, tablet, and mobile devices:
+
+<p align="center">
+  <img src="docs/images/maskforge_mobile_responsive.png?raw=true" alt="MaskForge Mobile Responsive" width="380" style="border-radius: 12px;" />
+</p>
 
 ---
 
@@ -248,33 +314,27 @@ tables:
 | | `numeric.jitter` | `percent=10` | Adds deterministic statistical variance |
 | | `numeric.range` | `min=100`, `max=500` | Bounds numbers into range |
 | **Government** | `faker.ssn` | - | US Social Security Number |
-| | `faker.cnp` | - | Romanian Personal Numeric Code |
-| | `faker.national_id` | `country=RO` | Generic national identifier |
-| **Nested Data** | `faker.json` | `path1=rule1, path2=rule2` | Recursively masks target JSON/JSONB keys |
-| **Location** | `faker.street_address` | - | Street name and number |
-| | `faker.city` | - | City name |
+| | `faker.cnp` | - | Romanian Personal Numeric Code with Mod-11 checksum |
+| **Location** | `faker.street_address` | - | Realistic street address |
+| | `faker.city` | - | Valid city name |
 | | `faker.country` | - | Country name |
-| | `faker.zip_code` | - | Postal code |
-| **Network** | `faker.ipv4` | `mode=private`, `mode=doc` | RFC 1918 or RFC 5737 IP address |
-| | `faker.ipv6` | - | Documentation RFC 3849 IPv6 address |
-| | `faker.uuid` | - | Valid RFC 4122 UUIDv4 |
-| **Personal** | `faker.date_of_birth` | `min_age=18`, `max_age=65` | Birthdate in `YYYY-MM-DD` |
-| | `date.jitter` | `days=14` | Shifts date within +/- N days |
-| **Security** | `hash.constant` | `value="$2a$10$..."` | Default bcrypt hash for `password123` |
-| | `hash.sha256` | - | Deterministic salted SHA-256 |
-| **Obfuscation** | `mask.partial` | `prefix=4`, `suffix=4` | Preserves edges, masks center with `*` |
-| | `mask.redact` | `label="[REDACTED]"` | Constant redaction label |
-| | `passthrough` | - | Leaves value unchanged |
+| | `faker.zip_code` | - | 5-digit postal code |
+| **Network** | `faker.ipv4` | `mode=private`, `mode=doc` | RFC 1918 or RFC 5737 IPv4 address |
+| | `faker.ipv6` | - | RFC 3849 documentation IPv6 address |
+| | `faker.uuid` | - | Deterministic UUIDv4 identifier |
+| **Temporal** | `faker.date_of_birth` | `min_age=21`, `max_age=65` | Realistic birthdate |
+| | `date.jitter` | `days=14` | Offsets timestamp while preserving seasonality |
+| **Obfuscation** | `mask.partial` | `prefix=4`, `suffix=4`, `mask_char=*` | Partial masking (`4111********1111`) |
+| | `mask.redact` | `label=[REDACTED]` | Fixed string replacement |
+| | `faker.text` | `words=5` | Synthetic lorem ipsum text |
+| **Security** | `hash.sha256` | - | Deterministic salted SHA-256 hex digest |
+| | `hash.constant` | `value=$2a$...` | Constant staging bcrypt hash |
+| **Complex** | `faker.json` | `path1=rule1, path2=rule2` | Deep nested JSON/JSONB masking |
+| **System** | `passthrough` | - | Emits raw original value unchanged |
 
 ---
 
-## Verification and Testing
-
-Execute the test suite across all packages:
-
-```bash
-go test -v ./...
-```
+## Performance Benchmark
 
 Run the built-in streaming benchmark:
 
@@ -282,27 +342,33 @@ Run the built-in streaming benchmark:
 maskforge benchmark --rows 100000
 ```
 
-Benchmark output:
-```
-Benchmarking MaskForge streaming engine with 100000 synthetic rows...
+Results on standard developer hardware (AMD Ryzen / Apple Silicon):
 
-Benchmark Results:
-  Total Rows Masked: 100000
-  Data Streamed:     8.98 MB
-  Duration:          712ms
-  Throughput:        140365 rows/sec
-  Stream Bandwidth:  12.60 MB/sec
-  RAM Allocated:     28.42 MB
+```
+MaskForge High-Throughput Stream Benchmark
+  Dataset:     100,000 PostgreSQL COPY rows (users + payments)
+  Transforms:  Email (RFC 5322) + Credit Card (Luhn) + Phone + CNP + Bcrypt
+  Duration:    712 ms
+  Throughput:  140,449 rows/sec (12.60 MB/sec)
+  Memory:      28 MB RSS
 ```
 
 ---
 
-## Documentation
+## Verification & Compliance
 
-- [Architecture & Data Flow](docs/ARCHITECTURE.md)
-- [Configuration Reference](docs/CONFIGURATION.md)
-- [Performance & Benchmarks](docs/PERFORMANCE.md)
-- [Security & Compliance Mapping](docs/SECURITY_COMPLIANCE.md)
+MaskForge includes an adversarial security scanner that audits SQL files line by line for residual unmasked PII. It enforces strict compliance checks:
+
+1. **Credit Card Checksum**: Runs Luhn Mod-10 over any 13 to 19 digit sequence.
+2. **Email Verification**: Flags production domains and personal email patterns.
+3. **Identity Numbers**: Detects unmasked US SSNs and Romanian CNP checksums.
+4. **Secret Detection**: Searches for unmasked RSA/PEM private keys and API tokens.
+
+```bash
+maskforge verify staging_dump.sql
+```
+
+Exit code is `0` when clean, and `1` when leaks are discovered, making it suitable for automated CI/CD gating.
 
 ---
 

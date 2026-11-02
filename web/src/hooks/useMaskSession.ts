@@ -143,7 +143,7 @@ export function useMaskSession() {
               break;
 
             case 'hipaa':
-              if (c.compliance.some((comp) => comp.toLowerCase().includes('hipaa')) || piiType.includes('email') || piiType.includes('phone') || piiType.includes('ssn') || colName.includes('dob') || colName.includes('birth')) {
+              if ((c.compliance || []).some((comp) => comp.toLowerCase().includes('hipaa')) || piiType.includes('email') || piiType.includes('phone') || piiType.includes('ssn') || colName.includes('dob') || colName.includes('birth')) {
                 cols[c.name] = c.recommended_rule;
               }
               break;

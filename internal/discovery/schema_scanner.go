@@ -234,14 +234,21 @@ func (s *SchemaScanner) ScanReader(r io.Reader, maxSamplesPerCol int) (*ScanRepo
 			piiRule, conf := DetectColumn(colName, samples)
 
 			col := DiscoveredColumn{
-				Name:         colName,
-				SampleValues: samples,
+				Name:               colName,
+				SampleValues:       samples,
+				Compliance:         []string{},
+				MaskedSampleValues: []string{},
+			}
+			if col.SampleValues == nil {
+				col.SampleValues = []string{}
 			}
 
 			if piiRule != nil {
 				col.DetectedType = piiRule.Type
 				col.Risk = piiRule.Risk
-				col.Compliance = piiRule.Compliance
+				if piiRule.Compliance != nil {
+					col.Compliance = piiRule.Compliance
+				}
 				col.RecommendedRule = piiRule.RecommendedRule
 				col.Confidence = conf
 				report.PIIColumns++

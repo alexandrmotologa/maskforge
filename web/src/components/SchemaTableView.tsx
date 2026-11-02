@@ -207,8 +207,8 @@ export const SchemaTableView: React.FC<SchemaTableViewProps> = ({
                           : col.recommended_rule;
 
                       const isMasked = activeRule && activeRule !== 'passthrough';
-                      const sampleOrig = col.sample_values[0] || '—';
-                      const sampleMasked = col.masked_sample_values[0] || sampleOrig;
+                      const sampleOrig = (col.sample_values && col.sample_values.length > 0) ? col.sample_values[0] : '—';
+                      const sampleMasked = (col.masked_sample_values && col.masked_sample_values.length > 0) ? col.masked_sample_values[0] : sampleOrig;
 
                       return (
                         <tr key={col.name} className="hover:bg-[#131b2e]/50 transition">
@@ -216,7 +216,7 @@ export const SchemaTableView: React.FC<SchemaTableViewProps> = ({
                           <td className="py-3 px-4">
                             <div className="flex items-center gap-2">
                               <span className="font-mono font-medium text-slate-200">{col.name}</span>
-                              {col.compliance.length > 0 && (
+                              {col.compliance && col.compliance.length > 0 && (
                                 <span className="text-[10px] text-teal-400 bg-teal-500/10 px-1.5 py-0.2 rounded border border-teal-500/20" title={col.compliance.join(', ')}>
                                   {col.compliance[0]}
                                 </span>

@@ -95,10 +95,10 @@ export function App() {
       />
 
       {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
         {/* Navigation Tabs Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#1e293b] pb-2">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#1e293b] pb-2">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1.5 sm:pb-0 scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -106,7 +106,7 @@ export function App() {
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                  className={`flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap shrink-0 ${
                     isActive
                       ? 'bg-[#172033] text-emerald-300 border border-emerald-500/40 shadow-md shadow-emerald-500/5'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-[#121929] border border-transparent'
@@ -129,7 +129,7 @@ export function App() {
             })}
           </div>
 
-          <div className="hidden sm:flex items-center gap-4 text-xs text-slate-500">
+          <div className="hidden lg:flex items-center gap-4 text-xs text-slate-500 shrink-0">
             <span className="flex items-center gap-1.5">
               <Lock className="w-3.5 h-3.5 text-emerald-400" /> Zero Disk Writes
             </span>
